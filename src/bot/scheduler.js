@@ -16,12 +16,23 @@ const AUTO_END_CRON = getValidCronExpression(process.env.AUTO_END_CRON, DEFAULT_
 const STORY_LANGUAGES = ['hindi', 'english'];
 
 function getValidCronExpression(value, fallback, name) {
-  if (!value || cron.validate(value)) {
-    return value || fallback;
+  const expression = String(value || '').trim();
+  const validShape = /^[-*/,\d]+\s+[-*/,\d]+\s+[-*/,\d]+\s+[-*/,\d]+\s+[-*/,\d]+$/;
+
+  try {
+    if (!expression) {
+      return fallback;
+    }
+
+    if (validShape.test(expression) && cron.validate(expression)) {
+      return expression;
+    }
+  } catch (error) {
+    logError(`Invalid ${name} validation failed`, error);
   }
 
   console.warn(`[scheduler] Invalid ${name}; using default`, {
-    received: value,
+    received: expression,
     fallback,
   });
 
