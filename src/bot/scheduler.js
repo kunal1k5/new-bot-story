@@ -8,10 +8,25 @@ const { getLanguageLabel } = require('../utils/language');
 const { logError, safeSendMessage } = require('../utils/errorHandler');
 const { ADMIN_PERMISSION_MESSAGE, checkBotAdminPermissions } = require('../utils/telegramPermissions');
 
-const AUTO_START_CRON = process.env.AUTO_START_CRON || '0 6 * * *';
-const AUTO_END_CRON = process.env.AUTO_END_CRON || '0 22 * * *';
+const DEFAULT_AUTO_START_CRON = '0 6 * * *';
+const DEFAULT_AUTO_END_CRON = '0 22 * * *';
 const AUTO_CRON_TIMEZONE = process.env.AUTO_CRON_TIMEZONE || 'Asia/Kolkata';
+const AUTO_START_CRON = getValidCronExpression(process.env.AUTO_START_CRON, DEFAULT_AUTO_START_CRON, 'AUTO_START_CRON');
+const AUTO_END_CRON = getValidCronExpression(process.env.AUTO_END_CRON, DEFAULT_AUTO_END_CRON, 'AUTO_END_CRON');
 const STORY_LANGUAGES = ['hindi', 'english'];
+
+function getValidCronExpression(value, fallback, name) {
+  if (!value || cron.validate(value)) {
+    return value || fallback;
+  }
+
+  console.warn(`[scheduler] Invalid ${name}; using default`, {
+    received: value,
+    fallback,
+  });
+
+  return fallback;
+}
 
 function getConfiguredGroupIds() {
   const rawGroupIds = [process.env.GROUP_ID, process.env.GROUP_IDS].filter(Boolean).join(',');
