@@ -1,0 +1,16 @@
+{
+  "name": "telegram-story-bot",
+  "version": "1.0.0",
+  "description": "Telegram story bot scaffold",
+  "main": "app.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "mongoose": "^8.5.4",
+    "node-cron": "^3.0.3",
+    "node-telegram-bot-api": "^0.66.0"
+  }
+}
