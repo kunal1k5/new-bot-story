@@ -24,6 +24,12 @@ const {
   sendLiveLeaderboardUpdate,
 } = require('../services/gamificationService');
 const {
+  fetchEpisodes,
+  scrapeAnimeInfo,
+  scrapeHome,
+  searchAnime,
+} = require('../services/animeKaiService');
+const {
   addStoryContribution,
   attachContributionMessage,
   attachFirstLineMessage,
@@ -69,6 +75,12 @@ const HELP_MESSAGE = `📘 How This Bot Works
 4️⃣ Vote using 👍👎
 5️⃣ Story auto ends at 10 PM
 
+Anime:
+/anime <name> - Search anime
+/anime_info <slug> - View details
+/anime_eps <anime_id> - View episodes
+/anime_home - Latest updates
+
 ✨ Tip: Be creative!`;
 const KNOWN_COMMANDS = new Set([
   '/start',
@@ -81,6 +93,10 @@ const KNOWN_COMMANDS = new Set([
   '/edit_my_line',
   '/endstory',
   '/story',
+  '/anime',
+  '/anime_home',
+  '/anime_info',
+  '/anime_eps',
 ]);
 
 if (!token) {
@@ -181,6 +197,111 @@ function createHomeKeyboard(chatType) {
   return appendChannelButton({
     inline_keyboard,
   });
+}
+
+function escapeHtml(value = '') {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function trimMessage(text, maxLength = 3900) {
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return `${text.slice(0, maxLength - 20)}\n\n...`;
+}
+
+function formatAnimeSearchResults(keyword, results) {
+  if (!results.length) {
+    return `No anime found for "${escapeHtml(keyword)}".`;
+  }
+
+  const lines = [`Anime search: <b>${escapeHtml(keyword)}</b>`, ''];
+
+  results.slice(0, 5).forEach((anime, index) => {
+    const meta = [anime.type, anime.year, anime.subEpisodes && `Sub ${anime.subEpisodes}`, anime.dubEpisodes && `Dub ${anime.dubEpisodes}`]
+      .filter(Boolean)
+      .join(' | ');
+
+    lines.push(
+      `<b>${index + 1}. ${escapeHtml(anime.title)}</b>`,
+      meta ? escapeHtml(meta) : 'No metadata',
+      `<code>${escapeHtml(anime.slug)}</code>`,
+      ''
+    );
+  });
+
+  lines.push('Use: <code>/anime_info &lt;slug&gt;</code>');
+
+  return trimMessage(lines.join('\n'));
+}
+
+function formatAnimeInfo(anime) {
+  const detail = anime.detail || {};
+  const genres = Array.isArray(detail.genres) ? detail.genres.join(', ') : detail.genres || '';
+  const status = detail.status || '';
+  const lines = [
+    `<b>${escapeHtml(anime.title || 'Anime')}</b>`,
+    anime.japaneseTitle ? escapeHtml(anime.japaneseTitle) : '',
+    '',
+    anime.description ? escapeHtml(anime.description.slice(0, 700)) : 'No description found.',
+    '',
+    anime.animeId ? `Anime ID: <code>${escapeHtml(anime.animeId)}</code>` : '',
+    anime.type ? `Type: ${escapeHtml(anime.type)}` : '',
+    anime.rating ? `Rating: ${escapeHtml(anime.rating)}` : '',
+    anime.malScore ? `MAL: ${escapeHtml(anime.malScore)}` : '',
+    genres ? `Genres: ${escapeHtml(genres)}` : '',
+    status ? `Status: ${escapeHtml(status)}` : '',
+    '',
+    anime.animeId ? `Episodes: <code>/anime_eps ${escapeHtml(anime.animeId)}</code>` : '',
+  ].filter((line) => line !== '');
+
+  return trimMessage(lines.join('\n'));
+}
+
+function formatAnimeEpisodes(animeId, episodes) {
+  if (!episodes.length) {
+    return `No episodes found for anime ID <code>${escapeHtml(animeId)}</code>.`;
+  }
+
+  const lines = [
+    `Episodes for <code>${escapeHtml(animeId)}</code>`,
+    `Total: ${episodes.length}`,
+    '',
+  ];
+
+  episodes.slice(0, 20).forEach((episode) => {
+    const flags = [episode.hasSub && 'SUB', episode.hasDub && 'DUB'].filter(Boolean).join('/');
+    lines.push(
+      `Ep ${escapeHtml(episode.number || '?')}: ${escapeHtml(episode.title || episode.slug || 'Untitled')} ${flags ? `(${flags})` : ''}`
+    );
+  });
+
+  if (episodes.length > 20) {
+    lines.push('', `Showing first 20 of ${episodes.length}.`);
+  }
+
+  return trimMessage(lines.join('\n'));
+}
+
+function formatAnimeHome(home) {
+  const latest = home.latestUpdates || [];
+
+  if (!latest.length) {
+    return 'No latest anime updates found right now.';
+  }
+
+  const lines = ['Latest anime updates:', ''];
+
+  latest.slice(0, 10).forEach((anime, index) => {
+    const episode = anime.currentEpisode ? ` Ep ${anime.currentEpisode}` : '';
+    lines.push(`${index + 1}. <b>${escapeHtml(anime.title)}</b>${escapeHtml(episode)}`);
+  });
+
+  return trimMessage(lines.join('\n'));
 }
 
 function getCommand(text = '') {
@@ -604,6 +725,8 @@ bot.onText(/^\/start(?:@\w+)?$/, async (msg) => {
 /leaderboard - View top players
 /profile - View your rank and badges
 /endstory - End active stories
+/anime <name> - Search anime
+/anime_home - Latest anime updates
 
 ✨ Send a Hindi line for the Hindi story or an English line for the English story.`,
       { reply_markup: createHomeKeyboard(msg.chat.type) }
@@ -677,6 +800,101 @@ bot.onText(/^\/profile(?:@\w+)?$/, async (msg) => {
     logError('/profile handler failed', error);
     await safeSendMessage(bot, msg?.chat?.id, '❌ Could not load your profile right now.');
   }
+});
+
+bot.onText(/^\/anime(?:@\w+)?\s+([\s\S]+)$/i, async (msg, match) => {
+  try {
+    if (!msg?.chat?.id) {
+      return;
+    }
+
+    const keyword = (match[1] || '').trim();
+
+    if (!keyword) {
+      await safeSendMessage(bot, msg.chat.id, 'Usage: /anime <anime name>');
+      return;
+    }
+
+    const results = await searchAnime(keyword);
+    await safeSendMessage(bot, msg.chat.id, formatAnimeSearchResults(keyword, results), {
+      parse_mode: 'HTML',
+      disable_web_page_preview: true,
+    });
+  } catch (error) {
+    logError('/anime handler failed', error);
+    await safeSendMessage(bot, msg?.chat?.id, 'Could not search anime right now. Please try again later.');
+  }
+});
+
+bot.onText(/^\/anime(?:@\w+)?$/i, async (msg) => {
+  await safeSendMessage(bot, msg?.chat?.id, 'Usage: /anime <anime name>');
+});
+
+bot.onText(/^\/anime_home(?:@\w+)?$/i, async (msg) => {
+  try {
+    if (!msg?.chat?.id) {
+      return;
+    }
+
+    const home = await scrapeHome();
+    await safeSendMessage(bot, msg.chat.id, formatAnimeHome(home), {
+      parse_mode: 'HTML',
+      disable_web_page_preview: true,
+    });
+  } catch (error) {
+    logError('/anime_home handler failed', error);
+    await safeSendMessage(bot, msg?.chat?.id, 'Could not load anime updates right now.');
+  }
+});
+
+bot.onText(/^\/anime_info(?:@\w+)?\s+([\s\S]+)$/i, async (msg, match) => {
+  try {
+    if (!msg?.chat?.id) {
+      return;
+    }
+
+    const slug = (match[1] || '').trim();
+
+    if (!slug) {
+      await safeSendMessage(bot, msg.chat.id, 'Usage: /anime_info <slug>');
+      return;
+    }
+
+    const anime = await scrapeAnimeInfo(slug);
+    await safeSendMessage(bot, msg.chat.id, formatAnimeInfo(anime), {
+      parse_mode: 'HTML',
+      disable_web_page_preview: true,
+    });
+  } catch (error) {
+    logError('/anime_info handler failed', error);
+    await safeSendMessage(bot, msg?.chat?.id, 'Could not load anime info right now.');
+  }
+});
+
+bot.onText(/^\/anime_info(?:@\w+)?$/i, async (msg) => {
+  await safeSendMessage(bot, msg?.chat?.id, 'Usage: /anime_info <slug>');
+});
+
+bot.onText(/^\/anime_eps(?:@\w+)?\s+([\w.-]+)$/i, async (msg, match) => {
+  try {
+    if (!msg?.chat?.id) {
+      return;
+    }
+
+    const animeId = (match[1] || '').trim();
+    const episodes = await fetchEpisodes(animeId);
+    await safeSendMessage(bot, msg.chat.id, formatAnimeEpisodes(animeId, episodes), {
+      parse_mode: 'HTML',
+      disable_web_page_preview: true,
+    });
+  } catch (error) {
+    logError('/anime_eps handler failed', error);
+    await safeSendMessage(bot, msg?.chat?.id, 'Could not load episodes right now.');
+  }
+});
+
+bot.onText(/^\/anime_eps(?:@\w+)?$/i, async (msg) => {
+  await safeSendMessage(bot, msg?.chat?.id, 'Usage: /anime_eps <anime_id>');
 });
 
 bot.onText(/^\/editline(?:@\w+)?\s+(\d+)\s+([\s\S]+)$/i, async (msg, match) => {
