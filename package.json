@@ -8,10 +8,13 @@
     "start": "node bot-launcher.js"
   },
   "dependencies": {
-    "cheerio": "^1.0.0",
+    "cheerio": "1.0.0",
     "dotenv": "^16.4.5",
     "mongoose": "^8.5.4",
     "node-cron": "^3.0.3",
     "node-telegram-bot-api": "^0.66.0"
+  },
+  "overrides": {
+    "undici": "6.25.0"
   }
 }
